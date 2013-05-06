@@ -35,6 +35,7 @@ import dalvik.system.Zygote;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.ActivityManagerNative;
+import android.app.ActivityManager.RunningAppProcessInfo;
 import android.app.ActivityOptions;
 import android.app.ActivityThread;
 import android.app.AlertDialog;
@@ -11902,11 +11903,44 @@ public final class ActivityManagerService extends ActivityManagerNative
                 }
             }
         }
+
+        boolean eco_skip = false;
+        if (intent.getAction().equals(Intent.ACTION_SCREEN_ON)) {
+            eco_skip = true;
+            SystemProperties.set("persist.sys.screen.eco", "on");
+        } else if (intent.getAction().equals(Intent.ACTION_SCREEN_OFF)) {
+            eco_skip = true;
+            SystemProperties.set("persist.sys.screen.eco", "off");
+        } else if (intent.getAction().equals(Intent.ACTION_BOOT_COMPLETED)) {
+            eco_skip = true;
+        } else if (intent.getAction().equals("com.google.android.c2dm.intent.RECEIVE")) {
+            eco_skip = true;
+        }
         while (ir < NR) {
             if (receivers == null) {
                 receivers = new ArrayList();
             }
-            receivers.add(registeredReceivers.get(ir));
+            boolean broadcast_skip = false;
+            if(!eco_skip) {
+                if(("true".equals(SystemProperties.get("persist.sys.eco.enable"))) && 
+                   ("off".equals(SystemProperties.get("persist.sys.screen.eco")))) {
+                    try {
+                        List<RunningAppProcessInfo> appProcesses = ActivityManagerNative.getDefault().getRunningAppProcesses();
+                        for(RunningAppProcessInfo appProcess : appProcesses) {
+                            if(appProcess.processName.equals((registeredReceivers.get(ir)).packageName)) {
+                                if(!(appProcess.importance == RunningAppProcessInfo.IMPORTANCE_FOREGROUND)) {
+                                    broadcast_skip = true;
+                                }
+                                break;
+                            }
+                        }
+                    } catch (RemoteException e) {
+                    }
+                }
+            }
+            if(!broadcast_skip) {
+                receivers.add(registeredReceivers.get(ir));
+            }
             ir++;
         }
 

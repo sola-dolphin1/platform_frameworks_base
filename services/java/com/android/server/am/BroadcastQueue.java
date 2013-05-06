@@ -36,10 +36,19 @@ import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.util.EventLog;
 import android.util.Log;
 import android.util.Slog;
+
+import android.content.Context;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import android.app.ActivityManager.RunningAppProcessInfo;
+import android.app.ActivityManagerNative;
 
 /**
  * BROADCASTS
@@ -772,6 +781,49 @@ public class BroadcastQueue {
             // Is this receiver's application already running?
             ProcessRecord app = mService.getProcessRecordLocked(targetProcess,
                     info.activityInfo.applicationInfo.uid);
+
+            if(app != null) {
+                boolean eco_skip = false;
+                if (r.intent.getAction().equals(Intent.ACTION_SCREEN_ON)) {
+                    eco_skip = true;
+                    SystemProperties.set("persist.sys.screen.eco", "on");
+                } else if (r.intent.getAction().equals(Intent.ACTION_SCREEN_OFF)) {
+                    eco_skip = true;
+                    SystemProperties.set("persist.sys.screen.eco", "off");
+                } else if (r.intent.getAction().equals(Intent.ACTION_BOOT_COMPLETED)) {
+                    eco_skip = true;
+                } else if (r.intent.getAction().equals("com.google.android.c2dm.intent.RECEIVE")) {
+                    eco_skip = true;
+                }
+
+                boolean broadcast_skip = false;
+                if(!eco_skip) {
+                    if(("true".equals(SystemProperties.get("persist.sys.eco.enable"))) && 
+                       ("off".equals(SystemProperties.get("persist.sys.screen.eco")))) {
+                        try {
+                            List<RunningAppProcessInfo> appProcesses = ActivityManagerNative.getDefault().getRunningAppProcesses();
+                            for(RunningAppProcessInfo appProcess : appProcesses) {
+                                if(appProcess.processName.equals(app.processName)) {
+                                    if(!(appProcess.importance == RunningAppProcessInfo.IMPORTANCE_FOREGROUND)) {
+                                        broadcast_skip = true;
+                                    }
+                                    break;
+                                }
+                            }
+                        } catch (RemoteException e) {
+                        }
+                    }
+                }
+                if(broadcast_skip) {
+                    logBroadcastReceiverDiscardLocked(r);
+                    finishReceiverLocked(r, r.resultCode, r.resultData,
+                    r.resultExtras, r.resultAbort, true);
+                    scheduleBroadcastsLocked();
+                    r.state = BroadcastRecord.IDLE;
+                    return;
+                }
+            }
+
             if (app != null && app.thread != null) {
                 try {
                     app.addPackage(info.activityInfo.packageName);
